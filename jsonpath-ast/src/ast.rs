@@ -1,7 +1,7 @@
 pub mod parse {
     use pest_derive::Parser;
     #[derive(Parser)]
-    #[grammar = "../../jsonpath-rust/src/parser/grammar/json_path_9535.pest"]
+    #[grammar = "../src/parser/grammar/json_path_9535.pest"]
     pub struct JSPathParser;
 }
 
