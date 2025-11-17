@@ -1,11 +1,17 @@
 use crate::parser::model::Selector;
+use crate::query::gas::use_gas;
 use crate::query::queryable::Queryable;
 use crate::query::state::{Data, Pointer, State};
-use crate::query::Query;
+use crate::query::{Queried, Query};
 use std::cmp::{max, min};
 
 impl Query for Selector {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        use_gas(gas, step.size() as u32)?;
         match self {
             Selector::Name(key) => step.flat_map(|d| process_key(d, key)),
             Selector::Index(idx) => step.flat_map(|d| process_index(d, idx)),
@@ -13,7 +19,7 @@ impl Query for Selector {
             Selector::Slice(start, end, sl_step) => {
                 step.flat_map(|d| process_slice(d, start, end, sl_step))
             }
-            Selector::Filter(f) => f.process(step),
+            Selector::Filter(f) => f.process(step, gas),
         }
     }
 }
@@ -23,8 +29,8 @@ fn process_wildcard<T: Queryable>(
         inner: pointer,
         path,
     }: Pointer<T>,
-) -> Data<T> {
-    if let Some(array) = pointer.as_array() {
+) -> Queried<Data<T>> {
+    let result = if let Some(array) = pointer.as_array() {
         if array.is_empty() {
             Data::Nothing
         } else {
@@ -49,7 +55,9 @@ fn process_wildcard<T: Queryable>(
         }
     } else {
         Data::Nothing
-    }
+    };
+
+    Ok(result)
 }
 
 fn process_slice<'a, T: Queryable>(
@@ -57,7 +65,7 @@ fn process_slice<'a, T: Queryable>(
     start: &Option<i64>,
     end: &Option<i64>,
     step: &Option<i64>,
-) -> Data<'a, T> {
+) -> Queried<Data<'a, T>> {
     let extract_elems = |elements: &'a Vec<T>| -> Vec<(&'a T, usize)> {
         let len = elements.len() as i64;
         let norm = |i: i64| {
@@ -114,11 +122,11 @@ fn process_slice<'a, T: Queryable>(
         )
     };
 
-    inner
+    Ok(inner
         .as_array()
         .map(extract_elems)
         .map(elems_to_step)
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Processes escape sequences in JSON strings
@@ -176,18 +184,19 @@ fn normalize_json_key(input: &str) -> String {
 pub fn process_key<'a, T: Queryable>(
     Pointer { inner, path }: Pointer<'a, T>,
     key: &str,
-) -> Data<'a, T> {
-    inner
+) -> Queried<Data<'a, T>> {
+    let result = inner
         .get(normalize_json_key(key).as_str())
         .map(|v| Data::new_ref(Pointer::key(v, path, key)))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    Ok(result)
 }
 
 pub fn process_index<'a, T: Queryable>(
     Pointer { inner, path }: Pointer<'a, T>,
     idx: &i64,
-) -> Data<'a, T> {
-    inner
+) -> Queried<Data<'a, T>> {
+    let result = inner
         .as_array()
         .map(|array| {
             if *idx >= 0 {
@@ -207,7 +216,9 @@ pub fn process_index<'a, T: Queryable>(
                 }
             }
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -222,7 +233,7 @@ mod tests {
         let value = json!({" ": "value"});
         let segment = Segment::Selector(Selector::Name(" ".to_string()));
 
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -234,7 +245,7 @@ mod tests {
         let value = json!({"key": "value"});
         let segment = Segment::Selector(Selector::Name("key".to_string()));
 
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -246,7 +257,7 @@ mod tests {
     fn test_process_key_failed() {
         let value = json!({"key": "value"});
         let segment = Segment::Selector(Selector::Name("key2".to_string()));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(step, State::nothing(&value));
     }
@@ -255,7 +266,7 @@ mod tests {
     fn test_process_index() {
         let value = json!([1, 2, 3]);
         let segment = Segment::Selector(Selector::Index(1));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -267,7 +278,7 @@ mod tests {
     fn test_process_index_failed() {
         let value = json!([1, 2, 3]);
         let segment = Segment::Selector(Selector::Index(3));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(step, State::nothing(&value));
     }
@@ -276,7 +287,7 @@ mod tests {
     fn test_process_slice1() {
         let value = json!([1, 2, 3, 4, 5]);
         let segment = Segment::Selector(Selector::Slice(Some(1), Some(4), Some(1)));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -292,7 +303,7 @@ mod tests {
     fn test_process_slice2() {
         let value = json!([1, 2, 3, 4, 5]);
         let segment = Segment::Selector(Selector::Slice(Some(2), Some(0), Some(-1)));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -307,7 +318,7 @@ mod tests {
     fn test_process_slice3() {
         let value = json!([1, 2, 3, 4, 5]);
         let segment = Segment::Selector(Selector::Slice(Some(0), Some(5), Some(2)));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -323,7 +334,7 @@ mod tests {
     fn test_process_slice_failed() {
         let value = json!([1, 2, 3, 4, 5]);
         let segment = Segment::Selector(Selector::Slice(Some(0), Some(5), Some(0)));
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(step.ok_ref(), Some(vec![]));
     }
@@ -332,7 +343,7 @@ mod tests {
     fn test_process_wildcard() {
         let value = json!({"key": "value", "key2": "value2"});
         let segment = Segment::Selector(Selector::Wildcard);
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -347,7 +358,7 @@ mod tests {
     fn test_process_wildcard_array() {
         let value = json!([1, 2, 3]);
         let segment = Segment::Selector(Selector::Wildcard);
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(
             step.ok_ref(),
@@ -363,7 +374,7 @@ mod tests {
     fn test_process_wildcard_failed() {
         let value = json!(1);
         let segment = Segment::Selector(Selector::Wildcard);
-        let step = segment.process(State::root(&value));
+        let step = segment.process(State::root(&value), &mut 9999).unwrap();
 
         assert_eq!(step, State::nothing(&value));
     }
@@ -372,7 +383,7 @@ mod tests {
     fn multi_selector() -> Queried<()> {
         let json = json!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-        let vec = js_path("$['a',1]", &json)?;
+        let vec = js_path("$['a',1]", &json, 9999)?;
 
         assert_eq!(vec, vec![(&json!(1), "$[1]".to_string()).into(),]);
 
@@ -385,7 +396,7 @@ mod tests {
           "b": "bc"
         });
 
-        let vec = js_path("$['a',\r'b']", &json)?;
+        let vec = js_path("$['a',\r'b']", &json, 9999)?;
 
         assert_eq!(
             vec,

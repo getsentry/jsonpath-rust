@@ -1,21 +1,32 @@
 use crate::parser::model::{Comparable, Literal, SingularQuery, SingularQuerySegment};
+use crate::query::gas::use_gas;
 use crate::query::queryable::Queryable;
 use crate::query::selector::{process_index, process_key};
 use crate::query::state::{Data, State};
-use crate::query::Query;
+use crate::query::{Queried, Query};
 
 impl Query for Comparable {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
         match self {
-            Comparable::Literal(lit) => lit.process(step),
-            Comparable::Function(tf) => tf.process(step),
-            Comparable::SingularQuery(query) => query.process(step),
+            Comparable::Literal(lit) => lit.process(step, gas),
+            Comparable::Function(tf) => tf.process(step, gas),
+            Comparable::SingularQuery(query) => query.process(step, gas),
         }
     }
 }
 
 impl Query for Literal {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        // Don't consume gas here; these are just reads.
+
         let val = match self {
             Literal::Int(v) => (*v).into(),
             Literal::Float(v) => (*v).into(),
@@ -24,21 +35,30 @@ impl Query for Literal {
             Literal::Null => T::null(),
         };
 
-        State::data(state.root, Data::Value(val))
+        Ok(State::data(state.root, Data::Value(val)))
     }
 }
 
 impl Query for SingularQuery {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
         match self {
-            SingularQuery::Current(segments) => segments.process(step),
-            SingularQuery::Root(segments) => segments.process(step.shift_to_root()),
+            SingularQuery::Current(segments) => segments.process(step, gas),
+            SingularQuery::Root(segments) => segments.process(step.shift_to_root(), gas),
         }
     }
 }
 
 impl Query for SingularQuerySegment {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        use_gas(gas, step.size() as u32)?;
         match self {
             SingularQuerySegment::Index(idx) => step.flat_map(|d| process_index(d, idx)),
             SingularQuerySegment::Name(key) => step.flat_map(|d| process_key(d, key)),
@@ -47,9 +67,16 @@ impl Query for SingularQuerySegment {
 }
 
 impl Query for Vec<SingularQuerySegment> {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
-        self.iter()
-            .fold(state, |next, segment| segment.process(next))
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        let mut state = state;
+        for segment in self.iter() {
+            state = segment.process(state, gas)?;
+        }
+        Ok(state)
     }
 }
 
@@ -87,7 +114,7 @@ mod tests {
 
         let state = State::root(&value);
 
-        let result = query.process(state);
+        let result = query.process(state, &mut 9999).unwrap();
         assert_eq!(
             result.ok_ref(),
             Some(vec![Pointer::new(
@@ -127,7 +154,7 @@ mod tests {
             Data::new_ref(Pointer::new(&value, "$.name".to_string())),
         );
 
-        let result = query.process(state);
+        let result = query.process(state, &mut 9999).unwrap();
         assert_eq!(
             result.ok_ref(),
             Some(vec![Pointer::new(
@@ -159,7 +186,7 @@ mod tests {
 
         let state = State::root(&value);
 
-        let result = query.process(state);
+        let result = query.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!("Hello")));
     }
 }

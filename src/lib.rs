@@ -101,17 +101,17 @@ use serde_json::Value;
 pub trait JsonPath: Queryable {
     /// Queries the value with a JSONPath expression and returns a vector of `QueryResult`.
     fn query_with_path(&self, path: &str) -> Queried<Vec<QueryRef<Self>>> {
-        query::js_path(path, self)
+        query::js_path(path, self, 100)
     }
 
     /// Queries the value with a JSONPath expression and returns a vector of values.
     fn query_only_path(&self, path: &str) -> Queried<Vec<QueryPath>> {
-        query::js_path_path(path, self)
+        query::js_path_path(path, self, 100)
     }
 
     /// Queries the value with a JSONPath expression and returns a vector of values, omitting the path.
     fn query(&self, path: &str) -> Queried<Vec<&Self>> {
-        query::js_path_vals(path, self)
+        query::js_path_vals(path, self, 100)
     }
 }
 

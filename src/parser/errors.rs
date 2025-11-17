@@ -30,6 +30,8 @@ pub enum JsonPathError {
     EmptyInner(String),
     #[error("Invalid json path: {0}")]
     InvalidJsonPath(String),
+    #[error("Path evaluation took too long")]
+    TookTooLong,
 }
 
 impl JsonPathError {
