@@ -14,7 +14,11 @@ struct SearchData {
 const PATH: &str = "$[?search(@.author,'.*(?i)d\\\\(Rees\\\\)')]";
 
 fn regex_perf_test_with_reuse(cfg: &SearchData) {
-    let _v = cfg.path.process(State::root(&cfg.json)).data;
+    let _v = cfg
+        .path
+        .process(State::root(&cfg.json), &mut 999999)
+        .unwrap()
+        .data;
 }
 
 fn regex_perf_test_without_reuse() {

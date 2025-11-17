@@ -1,13 +1,17 @@
 use crate::parser::model::FilterAtom;
 use crate::query::queryable::Queryable;
 use crate::query::state::{Data, State};
-use crate::query::Query;
+use crate::query::{Queried, Query};
 
 impl Query for FilterAtom {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
-        match self {
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        let result = match self {
             FilterAtom::Filter { expr, not } => {
-                let bool_res = expr.process(state);
+                let bool_res = expr.process(state, gas)?;
                 if *not {
                     invert_bool(bool_res)
                 } else {
@@ -16,7 +20,7 @@ impl Query for FilterAtom {
             }
             FilterAtom::Test { expr, not } => {
                 let new_state = |b| State::bool(b, state.root);
-                let res = expr.process(state.clone());
+                let res = expr.process(state.clone(), gas)?;
                 if expr.is_res_bool() {
                     if *not {
                         invert_bool(res)
@@ -50,8 +54,10 @@ impl Query for FilterAtom {
                     }
                 }
             }
-            FilterAtom::Comparison(cmp) => cmp.process(state),
-        }
+            FilterAtom::Comparison(cmp) => cmp.process(state, gas)?,
+        };
+
+        Ok(result)
     }
 }
 
@@ -84,7 +90,7 @@ mod tests {
         let json = json!({"i": 1});
         let atom = atom!(comparable!(lit!(i 1)), ">=", comparable!(lit!(i 1)));
         let state = State::root(&json);
-        let res = atom.process(state);
+        let res = atom.process(state, &mut 9999).unwrap();
         assert_eq!(res.ok_val().and_then(|v| v.as_bool()), Some(true));
     }
 
@@ -109,13 +115,18 @@ mod tests {
 
         assert_eq!(
             atom_or
-                .process(state.clone())
+                .process(state.clone(), &mut 9999)
+                .unwrap()
                 .ok_val()
                 .and_then(|v| v.as_bool()),
             Some(true)
         );
         assert_eq!(
-            atom_and.process(state).ok_val().and_then(|v| v.as_bool()),
+            atom_and
+                .process(state, &mut 9999)
+                .unwrap()
+                .ok_val()
+                .and_then(|v| v.as_bool()),
             Some(true)
         );
     }

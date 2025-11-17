@@ -2,6 +2,7 @@ mod atom;
 mod comparable;
 mod comparison;
 mod filter;
+mod gas;
 mod jp_query;
 pub mod queryable;
 mod segment;
@@ -26,7 +27,11 @@ pub type Queried<T> = Result<T, JsonPathError>;
 
 /// Main internal trait to implement the logic of processing jsonpath.
 pub trait Query {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T>;
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>>;
 }
 
 /// The resulting type of JSONPath query.
@@ -62,8 +67,12 @@ impl<'a, T: Queryable> From<Pointer<'a, T>> for QueryRef<'a, T> {
 
 /// The main function to process a JSONPath query.
 /// It takes a path and a value, and returns a vector of `QueryResult` thus values + paths.
-pub fn js_path<'a, T: Queryable>(path: &str, value: &'a T) -> Queried<Vec<QueryRef<'a, T>>> {
-    js_path_process(&parse_json_path(path)?, value)
+pub fn js_path<'a, T: Queryable>(
+    path: &str,
+    value: &'a T,
+    mut gas: u32,
+) -> Queried<Vec<QueryRef<'a, T>>> {
+    js_path_process(&parse_json_path(path)?, value, &mut gas)
 }
 
 /// A convenience function to process a JSONPath query
@@ -71,26 +80,29 @@ pub fn js_path<'a, T: Queryable>(path: &str, value: &'a T) -> Queried<Vec<QueryR
 pub fn js_path_process<'a, 'b, T: Queryable>(
     path: &'b JpQuery,
     value: &'a T,
+    gas: &'b mut u32,
 ) -> Queried<Vec<QueryRef<'a, T>>> {
-    match path.process(State::root(value)).data {
+    let result = match path.process(State::root(value), gas)?.data {
         Data::Ref(p) => Ok(vec![p.into()]),
         Data::Refs(refs) => Ok(refs.into_iter().map(Into::into).collect()),
         Data::Value(v) => Err(v.into()),
         Data::Nothing => Ok(vec![]),
-    }
+    };
+
+    result
 }
 
 /// A convenience function to process a JSONPath query and return a vector of values, omitting the path.
-pub fn js_path_vals<'a, T: Queryable>(path: &str, value: &'a T) -> Queried<Vec<&'a T>> {
-    Ok(js_path(path, value)?
+pub fn js_path_vals<'a, T: Queryable>(path: &str, value: &'a T, gas: u32) -> Queried<Vec<&'a T>> {
+    Ok(js_path(path, value, gas)?
         .into_iter()
         .map(|r| r.val())
         .collect::<Vec<_>>())
 }
 
 /// A convenience function to process a JSONPath query and return a vector of paths, omitting the values.
-pub fn js_path_path<T: Queryable>(path: &str, value: &T) -> Queried<Vec<QueryPath>> {
-    Ok(js_path(path, value)?
+pub fn js_path_path<T: Queryable>(path: &str, value: &T, gas: u32) -> Queried<Vec<QueryPath>> {
+    Ok(js_path(path, value, gas)?
         .into_iter()
         .map(|r| r.path())
         .collect::<Vec<_>>())
@@ -170,7 +182,7 @@ mod tests {
       ],
      "expensive": 10 }"#
     }
-    
+
     #[test]
     fn update_by_path_test() -> Queried<()> {
         let mut json = json!([
@@ -477,7 +489,7 @@ mod tests {
           "b": "bc"
         });
 
-        let vec = js_path("$['a',\r'b']", &json)?;
+        let vec = js_path("$['a',\r'b']", &json, 9999)?;
 
         assert_eq!(
             vec,
@@ -498,7 +510,7 @@ mod tests {
           }
         });
 
-        let vec = js_path("$['a'] \r['b']", &json)?;
+        let vec = js_path("$['a'] \r['b']", &json, 9999)?;
 
         assert_eq!(vec, vec![(&json!("ab"), "$['a']['b']".to_string()).into(),]);
 
@@ -508,7 +520,7 @@ mod tests {
     fn space_in_search() -> Queried<()> {
         let json = json!(["foo", "123"]);
 
-        let vec = js_path("$[?search(@\n,'[a-z]+')]", &json)?;
+        let vec = js_path("$[?search(@\n,'[a-z]+')]", &json, 9999)?;
 
         assert_eq!(vec, vec![(&json!("foo"), "$[0]".to_string()).into(),]);
 
@@ -527,7 +539,7 @@ mod tests {
           }
         ]);
 
-        let vec = js_path("$[?@.a!=\"b\"]", &json)?;
+        let vec = js_path("$[?@.a!=\"b\"]", &json, 9999)?;
 
         assert_eq!(
             vec,
@@ -554,7 +566,7 @@ mod tests {
           ]
         });
 
-        let vec = js_path("$.values[?match(@, $.regex)]", &json)?;
+        let vec = js_path("$.values[?match(@, $.regex)]", &json, 9999)?;
 
         assert_eq!(
             vec,
@@ -569,7 +581,7 @@ mod tests {
           "/": "A"
         });
 
-        let vec = js_path("$['\\/']", &json)?;
+        let vec = js_path("$['\\/']", &json, 9999)?;
 
         assert_eq!(vec, vec![(&json!("A"), "$['\\/']".to_string()).into(),]);
 
@@ -579,7 +591,7 @@ mod tests {
     fn unicode_fns() -> Queried<()> {
         let json = json!(["ж", "Ж", "1", "жЖ", true, [], {}]);
 
-        let vec = js_path("$[?match(@, '\\\\p{Lu}')]", &json)?;
+        let vec = js_path("$[?match(@, '\\\\p{Lu}')]", &json, 9999)?;
 
         assert_eq!(vec, vec![(&json!("Ж"), "$[1]".to_string()).into(),]);
 
@@ -589,7 +601,7 @@ mod tests {
     fn fn_res_can_not_compare() -> Queried<()> {
         let json = json!({});
 
-        let vec = js_path("$[?match(@.a, 'a.*')==true]", &json);
+        let vec = js_path("$[?match(@.a, 'a.*')==true]", &json, 9999);
 
         assert!(vec.is_err());
 
@@ -599,7 +611,7 @@ mod tests {
     fn too_small() -> Queried<()> {
         let json = json!({});
 
-        let vec = js_path("$[-9007199254740992]", &json);
+        let vec = js_path("$[-9007199254740992]", &json, 9999);
 
         assert!(vec.is_err());
 
@@ -648,7 +660,7 @@ mod tests {
           "b": "B"
         });
 
-        let vec = js_path("$[\"a'\"]", &json)?;
+        let vec = js_path("$[\"a'\"]", &json, 9999)?;
         assert_eq!(vec, vec![(&json!("A"), "$['\"a\'\"']".to_string()).into(),]);
 
         Ok(())
@@ -683,7 +695,7 @@ mod tests {
           ]
         });
 
-        let vec = js_path("$..[1]", &json)?;
+        let vec = js_path("$..[1]", &json, 9999)?;
         assert_eq!(
             vec,
             vec![
@@ -704,7 +716,7 @@ mod tests {
           }
         ]);
 
-        let vec = js_path("$[?@.absent==@.list[9]]", &json)?;
+        let vec = js_path("$[?@.absent==@.list[9]]", &json, 9999)?;
         assert_eq!(
             vec,
             vec![(&json!({"list": [1]}), "$[0]".to_string()).into(),]
@@ -835,8 +847,8 @@ mod tests {
 
         let jq = parse_json_path("$[?@<3]")?;
 
-        let v1 = js_path_process(&jq, &json1)?;
-        let v2 = js_path_process(&jq, &json2)?;
+        let v1 = js_path_process(&jq, &json1, &mut 9999)?;
+        let v2 = js_path_process(&jq, &json2, &mut 9999)?;
 
         assert_eq!(v1, v2);
 

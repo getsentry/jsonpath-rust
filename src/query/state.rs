@@ -1,5 +1,5 @@
-use crate::query::queryable::Queryable;
 use crate::query::QueryPath;
+use crate::query::{queryable::Queryable, Queried};
 use std::fmt::{Display, Formatter};
 
 /// Represents the state of a query, including the current data and the root object.
@@ -71,19 +71,30 @@ impl<'a, T: Queryable> State<'a, T> {
         matches!(&self.data, Data::Nothing)
     }
 
-    pub fn reduce(self, other: State<'a, T>) -> State<'a, T> {
-        State {
+    pub fn reduce(self, other: State<'a, T>) -> Queried<State<'a, T>> {
+        let data = self.data.reduce(other.data);
+        Ok(State {
             root: self.root,
-            data: self.data.reduce(other.data),
-        }
+            data,
+        })
     }
-    pub fn flat_map<F>(self, f: F) -> State<'a, T>
+    pub fn flat_map<F>(self, f: F) -> Queried<State<'a, T>>
     where
-        F: Fn(Pointer<'a, T>) -> Data<'a, T>,
+        F: FnMut(Pointer<'a, T>) -> Queried<Data<'a, T>>,
     {
-        State {
+        let data = self.data.flat_map(f)?;
+        Ok(State {
             root: self.root,
-            data: self.data.flat_map(f),
+            data,
+        })
+    }
+
+    pub fn size(&self) -> usize {
+        match &self.data {
+            Data::Ref(pointer) => 1,
+            Data::Refs(pointers) => pointers.len(),
+            Data::Value(_) => 1,
+            Data::Nothing => 0,
         }
     }
 }
@@ -141,24 +152,31 @@ impl<'a, T: Queryable> Data<'a, T> {
         }
     }
 
-    pub fn flat_map<F>(self, f: F) -> Data<'a, T>
+    pub fn flat_map<F>(self, mut f: F) -> Queried<Data<'a, T>>
     where
-        F: Fn(Pointer<'a, T>) -> Data<'a, T>,
+        F: FnMut(Pointer<'a, T>) -> Queried<Data<'a, T>>,
     {
-        match self {
-            Data::Ref(data) => f(data),
-            Data::Refs(data_vec) => Data::Refs(
-                data_vec
-                    .into_iter()
-                    .flat_map(|data| match f(data) {
+        let result = match self {
+            Data::Ref(data) => f(data)?,
+            Data::Refs(data_vec) => {
+                let mut result = vec![];
+                for d in data_vec.into_iter() {
+                    let r = f(d)?;
+                    let r2 = match r {
                         Data::Ref(data) => vec![data],
                         Data::Refs(data_vec) => data_vec,
                         _ => vec![],
-                    })
-                    .collect::<Vec<_>>(),
-            ),
+                    };
+                    result.push(r2);
+                }
+                let result = result.into_iter().flatten().collect::<Vec<_>>();
+
+                Data::Refs(result)
+            }
             _ => Data::Nothing,
-        }
+        };
+
+        Ok(result)
     }
 
     /// Returns the inner value if it is a single reference.

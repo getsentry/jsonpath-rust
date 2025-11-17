@@ -1,18 +1,29 @@
 use crate::parser::model::{JpQuery, Segment};
 use crate::query::queryable::Queryable;
 use crate::query::state::State;
-use crate::query::Query;
+use crate::query::{Queried, Query};
 
 impl Query for JpQuery {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
-        self.segments.process(state)
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        self.segments.process(state, gas)
     }
 }
 
 impl Query for Vec<Segment> {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
-        self.iter()
-            .fold(state, |next, segment| segment.process(next))
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        let mut state = state;
+        for segment in self.iter() {
+            state = segment.process(state, gas)?;
+        }
+        Ok(state)
     }
 }
 
@@ -50,7 +61,7 @@ mod tests {
 
         let state = State::data(&value, Data::new_ref(Pointer::new(&value, "$".to_string())));
 
-        let result = query.process(state);
+        let result = query.process(state, &mut 9999).unwrap();
         assert_eq!(
             result.ok_ref(),
             Some(vec![Pointer::new(

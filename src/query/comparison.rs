@@ -1,22 +1,32 @@
 use crate::parser::model::{Comparable, Comparison, Literal, SingularQuery, SingularQuerySegment};
+use crate::query::gas::use_gas;
 use crate::query::queryable::Queryable;
 use crate::query::state::{Data, Pointer, State};
-use crate::query::Query;
+use crate::query::{Queried, Query};
 
 impl Query for Comparison {
-    fn process<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
         let root = state.root;
         let (lhs, rhs) = self.vals();
-        let lhs = lhs.process(state.clone());
-        let rhs = rhs.process(state);
-        match self {
+        let lhs = lhs.process(state.clone(), gas)?;
+        let rhs = rhs.process(state, gas)?;
+
+        use_gas(gas, 1)?;
+
+        let result = match self {
             Comparison::Eq(..) => State::bool(eq(lhs, rhs), root),
             Comparison::Ne(..) => State::bool(!eq(lhs, rhs), root),
             Comparison::Gt(..) => State::bool(lt(rhs, lhs), root),
             Comparison::Gte(..) => State::bool(lt(rhs.clone(), lhs.clone()) || eq(lhs, rhs), root),
             Comparison::Lt(..) => State::bool(lt(lhs, rhs), root),
             Comparison::Lte(..) => State::bool(lt(lhs.clone(), rhs.clone()) || eq(lhs, rhs), root),
-        }
+        };
+
+        Ok(result)
     }
 }
 
@@ -92,7 +102,7 @@ mod tests {
         let state = State::root(&data);
 
         let comparison = Comparison::Eq(comparable!(lit!(s "key")), comparable!(lit!(s "key")));
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(true)));
     }
 
@@ -106,7 +116,7 @@ mod tests {
             comparable!(> singular_query!(@ key)),
         );
 
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(true)));
     }
 
@@ -119,7 +129,7 @@ mod tests {
             comparable!(> singular_query!(@ key)),
             comparable!(> singular_query!(key2)),
         );
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(true)));
     }
 
@@ -129,7 +139,7 @@ mod tests {
         let state = State::root(&data);
 
         let comparison = Comparison::Ne(comparable!(lit!(s "key")), comparable!(lit!(s "key")));
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(false)));
     }
 
@@ -142,7 +152,7 @@ mod tests {
             comparable!(lit!(i 2)),
             comparable!(> singular_query!(@ key)),
         );
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(true)));
     }
 
@@ -155,7 +165,7 @@ mod tests {
             comparable!(lit!(i 2)),
             comparable!(> singular_query!(@ key)),
         );
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(false)));
     }
 
@@ -168,7 +178,7 @@ mod tests {
             comparable!(> singular_query!(@ key)),
             comparable!(lit!(i 2)),
         );
-        let result = comparison.process(state);
+        let result = comparison.process(state, &mut 9999).unwrap();
         assert_eq!(result.ok_val(), Some(json!(true)));
     }
 }

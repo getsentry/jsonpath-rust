@@ -1,60 +1,104 @@
+use crate::parser::errors::JsonPathError;
 use crate::parser::model::{FnArg, TestFunction};
+use crate::query::gas::use_gas;
 use crate::query::queryable::Queryable;
 use crate::query::state::{Data, Pointer, State};
-use crate::query::Query;
+use crate::query::{Queried, Query};
 use regex::Regex;
 use std::borrow::Cow;
 
 impl TestFunction {
-    pub fn apply<'a, T: Queryable>(&self, state: State<'a, T>) -> State<'a, T> {
-        match self {
-            TestFunction::Length(arg) => length(arg.process(state)),
-            TestFunction::Count(arg) => count(arg.process(state)),
-            TestFunction::Match(lhs, rhs) => {
-                regex(lhs.process(state.clone()), rhs.process(state), false)
-            }
-            TestFunction::Search(lhs, rhs) => {
-                regex(lhs.process(state.clone()), rhs.process(state), true)
-            }
-            TestFunction::Custom(name, args) => custom(name, args, state),
-            TestFunction::Value(arg) => value(arg.process(state)),
+    pub fn apply<'a, 'b, T: Queryable>(
+        &'b self,
+        state: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        let result = match self {
+            TestFunction::Length(arg) => length(arg.process(state, gas)?),
+            TestFunction::Count(arg) => count(arg.process(state, gas)?),
+            TestFunction::Match(lhs, rhs) => regex(
+                lhs.process(state.clone(), gas)?,
+                rhs.process(state, gas)?,
+                false,
+            ),
+            TestFunction::Search(lhs, rhs) => regex(
+                lhs.process(state.clone(), gas)?,
+                rhs.process(state, gas)?,
+                true,
+            ),
+            TestFunction::Custom(name, args) => custom(name, args, state, gas)?,
+            TestFunction::Value(arg) => value(arg.process(state, gas)?),
             _ => State::nothing(state.root),
-        }
+        };
+
+        Ok(result)
     }
 }
 
 impl Query for FnArg {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
+    fn process<'a, 'b, T: Queryable>(
+        &self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
         match self {
-            FnArg::Literal(lit) => lit.process(step),
-            FnArg::Test(test) => test.process(step),
-            FnArg::Filter(filter) => filter.process(step),
+            FnArg::Literal(lit) => lit.process(step, gas),
+            FnArg::Test(test) => test.process(step, gas),
+            FnArg::Filter(filter) => filter.process(step, gas),
         }
     }
 }
 
 impl Query for TestFunction {
-    fn process<'a, T: Queryable>(&self, step: State<'a, T>) -> State<'a, T> {
-        self.apply(step)
+    fn process<'a, 'b, T: Queryable>(
+        &'b self,
+        step: State<'a, T>,
+        gas: &'b mut u32,
+    ) -> Queried<State<'a, T>> {
+        self.apply(step, gas)
     }
 }
 
-fn custom<'a, T: Queryable>(name: &str, args: &Vec<FnArg>, state: State<'a, T>) -> State<'a, T> {
-    let args = args
-        .into_iter()
-        .map(|v| v.process(state.clone()))
-        .flat_map(|v| match v.data {
+fn custom<'a, 'b, T: Queryable>(
+    name: &str,
+    args: &Vec<FnArg>,
+    state: State<'a, T>,
+    gas: &'b mut u32,
+) -> Queried<State<'a, T>> {
+    let mut data = vec![];
+    for arg in args.into_iter() {
+        let r = arg.process(state.clone(), gas)?;
+        let vs = match r.data {
             Data::Value(v) => vec![Cow::Owned(v)],
             Data::Ref(Pointer { inner, .. }) => vec![Cow::Borrowed(inner)],
-            Data::Refs(v) => v.into_iter().map(|v| Cow::Borrowed(v.inner)).collect(),
-            _ => vec![],
-        })
-        .collect::<Vec<_>>();
+            Data::Refs(v) => {
+                let mut data2 = vec![];
+                for v2 in v.into_iter() {
+                    data2.push(Cow::Borrowed(v2.inner));
+                }
+                data2
+            }
+            Data::Nothing => vec![],
+        };
+        data.push(vs);
+    }
+    let args = data.into_iter().flatten().collect();
 
-    State::data(
+    // let args = args
+    //     .into_iter()
+    //     .map(|v| v.process(state.clone()))
+    //     .flat_map(|v| match v.data {
+    //         Data::Value(v) => vec![Cow::Owned(v)],
+    //         Data::Ref(Pointer { inner, .. }) => vec![Cow::Borrowed(inner)],
+    //         Data::Refs(v) => v.into_iter().map(|v| Cow::Borrowed(v.inner)).collect(),
+    //         _ => vec![],
+    //     })
+    //     .collect::<Vec<_>>();
+
+    Ok(State::data(
         state.root,
         Data::Value(Queryable::extension_custom(name, args)),
-    )
+    ))
 }
 
 /// Returns the length/size of the object.
@@ -192,7 +236,7 @@ mod tests {
         let state = State::root(&json);
 
         let query = test_fn!(length arg!(t test!(@ segment!(selector!(array)))));
-        let res = query.process(state);
+        let res = query.process(state, &mut 9999).unwrap();
 
         assert_eq!(res.ok_val(), Some(json!(3)));
     }
@@ -206,7 +250,7 @@ mod tests {
             arg!(t test!(@ segment!(selector!(a)))),
             arg!(t test!(@ segment!(selector!(b))))
         );
-        let res = query.process(state);
+        let res = query.process(state, &mut 9999).unwrap();
 
         assert_eq!(res.ok_val(), Some(json!(true)));
     }
@@ -217,7 +261,7 @@ mod tests {
         let state = State::root(&json);
 
         let query = test_fn!(count arg!(t test!(@ segment!(selector!(array)))));
-        let res = query.process(state);
+        let res = query.process(state, &mut 9999).unwrap();
 
         assert_eq!(res.ok_val(), Some(json!(1)));
     }

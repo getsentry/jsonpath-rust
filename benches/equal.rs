@@ -15,7 +15,11 @@ struct SearchData {
 const PATH: &str = "$[?@.author == 'abcd(Rees)']";
 
 fn equal_perf_test_with_reuse(cfg: &SearchData) {
-    let _v = cfg.path.process(State::root(&cfg.json)).data;
+    let _v = cfg
+        .path
+        .process(State::root(&cfg.json), &mut 999999)
+        .unwrap()
+        .data;
 }
 fn equal_perf_test_without_reuse() {
     let json = Box::new(json!({
