@@ -32,6 +32,8 @@ pub enum JsonPathError {
     InvalidJsonPath(String),
     #[error("Path evaluation took too long")]
     TookTooLong,
+    #[error("Invalid glob syntax: {0}")]
+    InvalidGlob(String),
 }
 
 impl JsonPathError {

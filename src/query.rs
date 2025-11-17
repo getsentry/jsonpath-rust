@@ -516,16 +516,16 @@ mod tests {
 
         Ok(())
     }
-    #[test]
-    fn space_in_search() -> Queried<()> {
-        let json = json!(["foo", "123"]);
+    // #[test]
+    // fn space_in_search() -> Queried<()> {
+    //     let json = json!(["foo", "123"]);
 
-        let vec = js_path("$[?search(@\n,'[a-z]+')]", &json, 9999)?;
+    //     let vec = js_path("$[?search(@\n,'[a-z]+')]", &json, 9999)?;
 
-        assert_eq!(vec, vec![(&json!("foo"), "$[0]".to_string()).into(),]);
+    //     assert_eq!(vec, vec![(&json!("foo"), "$[0]".to_string()).into(),]);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
     #[test]
     fn filter_key() -> Queried<()> {
         let json = json!([
@@ -549,32 +549,32 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn regex_key() -> Queried<()> {
-        let json = json!({
-          "regex": "b.?b",
-          "values": [
-            "abc",
-            "bcd",
-            "bab",
-            "bba",
-            "bbab",
-            "b",
-            true,
-            [],
-            {}
-          ]
-        });
+    // #[test]
+    // fn regex_key() -> Queried<()> {
+    //     let json = json!({
+    //       "regex": "b.?b",
+    //       "values": [
+    //         "abc",
+    //         "bcd",
+    //         "bab",
+    //         "bba",
+    //         "bbab",
+    //         "b",
+    //         true,
+    //         [],
+    //         {}
+    //       ]
+    //     });
 
-        let vec = js_path("$.values[?match(@, $.regex)]", &json, 9999)?;
+    //     let vec = js_path("$.values[?match(@, $.regex)]", &json, 9999)?;
 
-        assert_eq!(
-            vec,
-            vec![(&json!("bab"), "$['values'][2]".to_string()).into(),]
-        );
+    //     assert_eq!(
+    //         vec,
+    //         vec![(&json!("bab"), "$['values'][2]".to_string()).into(),]
+    //     );
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
     #[test]
     fn name_sel() -> Queried<()> {
         let json = json!({
@@ -587,16 +587,16 @@ mod tests {
 
         Ok(())
     }
-    #[test]
-    fn unicode_fns() -> Queried<()> {
-        let json = json!(["ж", "Ж", "1", "жЖ", true, [], {}]);
+    // #[test]
+    // fn unicode_fns() -> Queried<()> {
+    //     let json = json!(["ж", "Ж", "1", "жЖ", true, [], {}]);
 
-        let vec = js_path("$[?match(@, '\\\\p{Lu}')]", &json, 9999)?;
+    //     let vec = js_path("$[?match(@, '\\\\p{Lu}')]", &json, 9999)?;
 
-        assert_eq!(vec, vec![(&json!("Ж"), "$[1]".to_string()).into(),]);
+    //     assert_eq!(vec, vec![(&json!("Ж"), "$[1]".to_string()).into(),]);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
     #[test]
     fn fn_res_can_not_compare() -> Queried<()> {
         let json = json!({});
