@@ -319,6 +319,7 @@ impl Test {
                 TestFunction::Custom(_, _) => true,
                 TestFunction::Search(_, _) => true,
                 TestFunction::Match(_, _) => true,
+                TestFunction::Glob(_, _) => true,
             },
         }
     }
@@ -353,6 +354,8 @@ pub enum TestFunction {
     Search(FnArg, FnArg),
     /// Represents a match function.
     Match(FnArg, FnArg),
+
+    Glob(FnArg, FnArg),
 }
 
 impl TestFunction {
@@ -382,15 +385,17 @@ impl TestFunction {
             ("count", [a]) => Ok(TestFunction::Count(
                 with_node_type_validation(a, name)?.clone(),
             )),
-            ("search", [a, b]) => Ok(TestFunction::Search(a.clone(), b.clone())),
-            ("match", [a, b]) => Ok(TestFunction::Match(a.clone(), b.clone())),
-            ("length" | "value" | "count" | "match" | "search", args) => {
-                Err(JsonPathError::InvalidJsonPath(format!(
-                    "Invalid number of arguments for the function `{}`: got {}",
-                    name,
-                    args.len()
-                )))
-            }
+            //("search", [a, b]) => Ok(TestFunction::Search(a.clone(), b.clone())),
+            //("match", [a, b]) => Ok(TestFunction::Match(a.clone(), b.clone())),
+            ("glob", [a, b]) => Ok(TestFunction::Glob(a.clone(), b.clone())),
+            ("search" | "match", _) => Err(JsonPathError::InvalidJsonPath(format!(
+                "search and match functions are currently unsupported",
+            ))),
+            ("length" | "value" | "count", args) => Err(JsonPathError::InvalidJsonPath(format!(
+                "Invalid number of arguments for the function `{}`: got {}",
+                name,
+                args.len()
+            ))),
             (custom, _) => Ok(TestFunction::Custom(custom.to_string(), args)),
         }
     }
@@ -403,6 +408,7 @@ impl TestFunction {
             TestFunction::Custom(_, _) => false,
             TestFunction::Search(_, _) => false,
             TestFunction::Match(_, _) => false,
+            TestFunction::Glob(_, _) => false,
         }
     }
 }
@@ -421,6 +427,7 @@ impl Display for TestFunction {
             TestFunction::Count(arg) => write!(f, "count({})", arg),
             TestFunction::Search(arg1, arg2) => write!(f, "search({}, {})", arg1, arg2),
             TestFunction::Match(arg1, arg2) => write!(f, "match({}, {})", arg1, arg2),
+            TestFunction::Glob(arg1, arg2) => write!(f, "glob({}, {})", arg1, arg2),
         }
     }
 }
