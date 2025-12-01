@@ -26,38 +26,38 @@ pub type Parsed<T> = Result<T, JsonPathError>;
 /// # Errors
 ///
 /// Returns a variant of [crate::JsonPathParserError] if the parsing operation failed.
-pub fn parse_json_path(jp_str: &str) -> Parsed<JpQuery> {
+pub fn parse_json_path(jp_str: &str, glob_complexity: u64) -> Parsed<JpQuery> {
     JSPathParser::parse(Rule::main, jp_str)
         .map_err(Box::new)?
         .next()
         .ok_or(JsonPathError::UnexpectedPestOutput)
         .and_then(next_down)
-        .and_then(jp_query)
+        .and_then(|rule| jp_query(rule, glob_complexity))
 }
 
-pub fn jp_query(rule: Pair<Rule>) -> Parsed<JpQuery> {
-    Ok(JpQuery::new(segments(next_down(rule)?)?))
+pub fn jp_query(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<JpQuery> {
+    Ok(JpQuery::new(segments(next_down(rule)?, glob_complexity)?))
 }
-pub fn rel_query(rule: Pair<Rule>) -> Parsed<Vec<Segment>> {
-    segments(next_down(rule)?)
+pub fn rel_query(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Vec<Segment>> {
+    segments(next_down(rule)?, glob_complexity)
 }
 
-pub fn segments(rule: Pair<Rule>) -> Parsed<Vec<Segment>> {
+pub fn segments(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Vec<Segment>> {
     let mut segments = vec![];
     for r in rule.into_inner() {
-        segments.push(segment(next_down(r)?)?);
+        segments.push(segment(next_down(r)?, glob_complexity)?);
     }
     Ok(segments)
 }
 
-pub fn child_segment(rule: Pair<Rule>) -> Parsed<Segment> {
+pub fn child_segment(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Segment> {
     match rule.as_rule() {
         Rule::wildcard_selector => Ok(Segment::Selector(Selector::Wildcard)),
         Rule::member_name_shorthand => Ok(Segment::name(rule.as_str().trim())),
         Rule::bracketed_selection => {
             let mut selectors = vec![];
             for r in rule.into_inner() {
-                selectors.push(selector(r)?);
+                selectors.push(selector(r, glob_complexity)?);
             }
             if selectors.len() == 1 {
                 Ok(Segment::Selector(
@@ -74,7 +74,7 @@ pub fn child_segment(rule: Pair<Rule>) -> Parsed<Segment> {
     }
 }
 
-pub fn segment(child: Pair<Rule>) -> Parsed<Segment> {
+pub fn segment(child: Pair<Rule>, glob_complexity: u64) -> Parsed<Segment> {
     match child.as_rule() {
         Rule::child_segment => {
             let val = child.as_str().strip_prefix(".").unwrap_or_default();
@@ -84,7 +84,7 @@ pub fn segment(child: Pair<Rule>) -> Parsed<Segment> {
                     child.as_str()
                 )))
             } else {
-                child_segment(next_down(child)?)
+                child_segment(next_down(child)?, glob_complexity)
             }
         }
         Rule::descendant_segment => {
@@ -100,16 +100,17 @@ pub fn segment(child: Pair<Rule>) -> Parsed<Segment> {
                     child.as_str()
                 )))
             } else {
-                Ok(Segment::Descendant(Box::new(child_segment(next_down(
-                    child,
-                )?)?)))
+                Ok(Segment::Descendant(Box::new(child_segment(
+                    next_down(child)?,
+                    glob_complexity,
+                )?)))
             }
         }
         _ => Err(child.into()),
     }
 }
 
-pub fn selector(rule: Pair<Rule>) -> Parsed<Selector> {
+pub fn selector(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Selector> {
     let child = next_down(rule)?;
     match child.as_rule() {
         Rule::name_selector => Ok(Selector::Name(
@@ -127,12 +128,15 @@ pub fn selector(rule: Pair<Rule>) -> Parsed<Selector> {
             let (start, end, step) = slice_selector(child)?;
             Ok(Selector::Slice(start, end, step))
         }
-        Rule::filter_selector => Ok(Selector::Filter(logical_expr(next_down(child)?)?)),
+        Rule::filter_selector => Ok(Selector::Filter(logical_expr(
+            next_down(child)?,
+            glob_complexity,
+        )?)),
         _ => Err(child.into()),
     }
 }
 
-pub fn function_expr(rule: Pair<Rule>) -> Parsed<TestFunction> {
+pub fn function_expr(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<TestFunction> {
     let fn_str = rule.as_str();
     let mut elems = rule.into_inner();
     let name = elems
@@ -157,31 +161,36 @@ pub fn function_expr(rule: Pair<Rule>) -> Parsed<TestFunction> {
             let next = next_down(arg)?;
             match next.as_rule() {
                 Rule::literal => args.push(FnArg::Literal(literal(next)?)),
-                Rule::test => args.push(FnArg::Test(Box::new(test(next)?))),
-                Rule::logical_expr => args.push(FnArg::Filter(logical_expr(next)?)),
+                Rule::test => args.push(FnArg::Test(Box::new(test(next, glob_complexity)?))),
+                Rule::logical_expr => {
+                    args.push(FnArg::Filter(logical_expr(next, glob_complexity)?))
+                }
 
                 _ => return Err(next.into()),
             }
         }
 
-        TestFunction::try_new(name, args)
+        TestFunction::try_new(name, args, glob_complexity)
     }
 }
 
-pub fn test(rule: Pair<Rule>) -> Parsed<Test> {
+pub fn test(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Test> {
     let child = next_down(rule)?;
     match child.as_rule() {
-        Rule::jp_query => Ok(Test::AbsQuery(jp_query(child)?)),
-        Rule::rel_query => Ok(Test::RelQuery(rel_query(child)?)),
-        Rule::function_expr => Ok(Test::Function(Box::new(function_expr(child)?))),
+        Rule::jp_query => Ok(Test::AbsQuery(jp_query(child, glob_complexity)?)),
+        Rule::rel_query => Ok(Test::RelQuery(rel_query(child, glob_complexity)?)),
+        Rule::function_expr => Ok(Test::Function(Box::new(function_expr(
+            child,
+            glob_complexity,
+        )?))),
         _ => Err(child.into()),
     }
 }
 
-pub fn logical_expr(rule: Pair<Rule>) -> Parsed<Filter> {
+pub fn logical_expr(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Filter> {
     let mut ors = vec![];
     for r in rule.into_inner() {
-        ors.push(logical_expr_and(r)?);
+        ors.push(logical_expr_and(r, glob_complexity)?);
     }
     if ors.len() == 1 {
         Ok(ors
@@ -193,10 +202,10 @@ pub fn logical_expr(rule: Pair<Rule>) -> Parsed<Filter> {
     }
 }
 
-pub fn logical_expr_and(rule: Pair<Rule>) -> Parsed<Filter> {
+pub fn logical_expr_and(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Filter> {
     let mut ands = vec![];
     for r in rule.into_inner() {
-        ands.push(Filter::Atom(filter_atom(r)?));
+        ands.push(Filter::Atom(filter_atom(r, glob_complexity)?));
     }
     if ands.len() == 1 {
         Ok(ands
@@ -268,15 +277,21 @@ pub fn singular_query(rule: Pair<Rule>) -> Parsed<SingularQuery> {
     }
 }
 
-pub fn comp_expr(rule: Pair<Rule>) -> Parsed<Comparison> {
+pub fn comp_expr(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Comparison> {
     let mut children = rule.into_inner();
 
-    let lhs = comparable(children.next().ok_or(JsonPathError::empty("comparison"))?)?;
+    let lhs = comparable(
+        children.next().ok_or(JsonPathError::empty("comparison"))?,
+        glob_complexity,
+    )?;
     let op = children
         .next()
         .ok_or(JsonPathError::empty("comparison"))?
         .as_str();
-    let rhs = comparable(children.next().ok_or(JsonPathError::empty("comparison"))?)?;
+    let rhs = comparable(
+        children.next().ok_or(JsonPathError::empty("comparison"))?,
+        glob_complexity,
+    )?;
 
     Comparison::try_new(op, lhs, rhs)
 }
@@ -336,7 +351,7 @@ pub fn literal(rule: Pair<Rule>) -> Parsed<Literal> {
     }
 }
 
-pub fn filter_atom(pair: Pair<Rule>) -> Parsed<FilterAtom> {
+pub fn filter_atom(pair: Pair<Rule>, glob_complexity: u64) -> Parsed<FilterAtom> {
     let rule = next_down(pair)?;
 
     match rule.as_rule() {
@@ -346,7 +361,7 @@ pub fn filter_atom(pair: Pair<Rule>) -> Parsed<FilterAtom> {
             for r in rule.into_inner() {
                 match r.as_rule() {
                     Rule::not_op => not = true,
-                    Rule::logical_expr => logic_expr = Some(logical_expr(r)?),
+                    Rule::logical_expr => logic_expr = Some(logical_expr(r, glob_complexity)?),
                     _ => (),
                 }
             }
@@ -355,14 +370,14 @@ pub fn filter_atom(pair: Pair<Rule>) -> Parsed<FilterAtom> {
                 .map(|expr| FilterAtom::filter(expr, not))
                 .ok_or("Logical expression is absent".into())
         }
-        Rule::comp_expr => Ok(FilterAtom::cmp(Box::new(comp_expr(rule)?))),
+        Rule::comp_expr => Ok(FilterAtom::cmp(Box::new(comp_expr(rule, glob_complexity)?))),
         Rule::test_expr => {
             let mut not = false;
             let mut test_expr = None;
             for r in rule.into_inner() {
                 match r.as_rule() {
                     Rule::not_op => not = true,
-                    Rule::test => test_expr = Some(test(r)?),
+                    Rule::test => test_expr = Some(test(r, glob_complexity)?),
                     _ => (),
                 }
             }
@@ -375,13 +390,13 @@ pub fn filter_atom(pair: Pair<Rule>) -> Parsed<FilterAtom> {
     }
 }
 
-pub fn comparable(rule: Pair<Rule>) -> Parsed<Comparable> {
+pub fn comparable(rule: Pair<Rule>, glob_complexity: u64) -> Parsed<Comparable> {
     let rule = next_down(rule)?;
     match rule.as_rule() {
         Rule::literal => Ok(Comparable::Literal(literal(rule)?)),
         Rule::singular_query => Ok(Comparable::SingularQuery(singular_query(rule)?)),
         Rule::function_expr => {
-            let tf = function_expr(rule)?;
+            let tf = function_expr(rule, glob_complexity)?;
             if tf.is_comparable() {
                 Ok(Comparable::Function(tf))
             } else {

@@ -355,11 +355,11 @@ pub enum TestFunction {
     /// Represents a match function.
     Match(FnArg, FnArg),
 
-    Glob(FnArg, FnArg),
+    Glob(FnArg, relay_pattern::Pattern),
 }
 
 impl TestFunction {
-    pub fn try_new(name: &str, args: Vec<FnArg>) -> Parsed<Self> {
+    pub fn try_new(name: &str, args: Vec<FnArg>, glob_complexity: u64) -> Parsed<Self> {
         fn with_node_type_validation<'a>(
             a: &'a FnArg,
             name: &str,
@@ -387,7 +387,24 @@ impl TestFunction {
             )),
             //("search", [a, b]) => Ok(TestFunction::Search(a.clone(), b.clone())),
             //("match", [a, b]) => Ok(TestFunction::Match(a.clone(), b.clone())),
-            ("glob", [a, b]) => Ok(TestFunction::Glob(a.clone(), b.clone())),
+            ("glob", [a, b]) => match b {
+                FnArg::Literal(Literal::String(pattern_literal)) => {
+                    match relay_pattern::Pattern::builder(&pattern_literal)
+                        .max_complexity(glob_complexity)
+                        .build()
+                    {
+                        Ok(p) => Ok(TestFunction::Glob(a.clone(), p)),
+                        Err(err) => Err(JsonPathError::InvalidGlob(
+                            pattern_literal.to_string(),
+                            err.to_string(),
+                        )),
+                    }
+                }
+                other => Err(JsonPathError::InvalidGlob(
+                    "".to_owned(),
+                    "Invalid string literal".to_owned(),
+                )),
+            },
             ("search" | "match", _) => Err(JsonPathError::InvalidJsonPath(format!(
                 "search and match functions are currently unsupported",
             ))),
