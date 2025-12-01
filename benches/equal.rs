@@ -34,7 +34,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         json: json!({
             "author":"abcd(Rees)",
         }),
-        path: parse_json_path(PATH).unwrap(),
+        path: parse_json_path(PATH, 100).unwrap(),
     };
     c.bench_function("equal bench with reuse", |b| {
         b.iter(|| equal_perf_test_with_reuse(&data))

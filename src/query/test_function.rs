@@ -26,11 +26,7 @@ impl TestFunction {
                 rhs.process(state, gas)?,
                 true,
             ),
-            TestFunction::Glob(lhs, rhs) => glob(
-                lhs.process(state.clone(), gas)?,
-                rhs.process(state, gas)?,
-                gas,
-            )?,
+            TestFunction::Glob(lhs, rhs) => glob(lhs.process(state.clone(), gas)?, rhs, gas)?,
 
             TestFunction::Custom(name, args) => custom(name, args, state, gas)?,
             TestFunction::Value(arg) => value(arg.process(state, gas)?),
@@ -191,7 +187,7 @@ fn regex<'a, T: Queryable>(lhs: State<'a, T>, rhs: State<'a, T>, substr: bool) -
 
 fn glob<'a, T: Queryable>(
     lhs: State<'a, T>,
-    rhs: State<'a, T>,
+    rhs: &relay_pattern::Pattern,
     gas: &mut u32,
 ) -> Queried<State<'a, T>> {
     let to_state = |b| State::bool(b, lhs.root);
@@ -202,13 +198,11 @@ fn glob<'a, T: Queryable>(
         _ => None,
     };
 
-    match (to_str(lhs), to_str(rhs)) {
-        (Some(lhs), Some(rhs)) => {
-            let p = relay_pattern::Pattern::new(&rhs)
-                .map_err(|e| JsonPathError::InvalidGlob(rhs.clone()))?;
+    match to_str(lhs) {
+        Some(lhs) => {
             // TODO: would be lovely to have a complexity measure here....
-            use_gas(gas, rhs.len() as u32)?;
-            Ok(to_state(p.is_match(&lhs)))
+            use_gas(gas, 10)?;
+            Ok(to_state(rhs.is_match(&lhs)))
         }
         _ => Ok(to_state(false)),
     }

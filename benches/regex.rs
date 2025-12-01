@@ -30,7 +30,7 @@ fn regex_perf_test_without_reuse() {
 }
 
 fn json_path_compiling() {
-    let _v = parse_json_path(PATH).unwrap();
+    let _v = parse_json_path(PATH, 100).unwrap();
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -38,7 +38,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         json: json!({
             "author":"abcd(Rees)",
         }),
-        path: parse_json_path(PATH).unwrap(),
+        path: parse_json_path(PATH, 100).unwrap(),
     };
     c.bench_function("regex bench with reuse", |b| {
         b.iter(|| regex_perf_test_with_reuse(&data))

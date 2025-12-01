@@ -372,7 +372,7 @@ fn parse_deletion_path(query_path: &str) -> Result<Option<DeletionInfo>, JsonPat
         return Ok(Some(DeletionInfo::Root));
     }
 
-    let JpQuery { segments } = parse_json_path(query_path)?;
+    let JpQuery { segments } = parse_json_path(query_path, 100)?;
 
     if segments.is_empty() {
         return Ok(None);
@@ -478,7 +478,7 @@ fn execute_deletion(value: &mut Value, deletion: &DeletionInfo) -> Queried<bool>
 }
 
 fn convert_js_path(path: &str) -> Parsed<String> {
-    let JpQuery { segments } = parse_json_path(path)?;
+    let JpQuery { segments } = parse_json_path(path, 100)?;
 
     let mut path = String::new();
     for segment in segments {

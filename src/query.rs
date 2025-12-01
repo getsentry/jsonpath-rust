@@ -72,7 +72,7 @@ pub fn js_path<'a, T: Queryable>(
     value: &'a T,
     mut gas: u32,
 ) -> Queried<Vec<QueryRef<'a, T>>> {
-    js_path_process(&parse_json_path(path)?, value, &mut gas)
+    js_path_process(&parse_json_path(path, 100)?, value, &mut gas)
 }
 
 /// A convenience function to process a JSONPath query
@@ -845,7 +845,7 @@ mod tests {
           "c": 3
         });
 
-        let jq = parse_json_path("$[?@<3]")?;
+        let jq = parse_json_path("$[?@<3]", 100)?;
 
         let v1 = js_path_process(&jq, &json1, &mut 9999)?;
         let v2 = js_path_process(&jq, &json2, &mut 9999)?;

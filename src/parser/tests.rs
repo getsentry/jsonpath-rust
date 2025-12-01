@@ -116,7 +116,7 @@ fn slice_selector_test() {
 
 #[test]
 fn function_expr_test() {
-    TestPair::new(Rule::function_expr, function_expr)
+    TestPair::new(Rule::function_expr, |rule| function_expr(rule, 100))
         .assert("length(1)", test_fn!(length arg!(lit!(i 1))))
         .assert("length(true)", test_fn!(length arg!(lit!(b true))))
         // .assert(
@@ -137,7 +137,7 @@ fn jq_test() {
         ">",
         comparable!(lit!(i 1))
     ));
-    TestPair::new(Rule::jp_query, jp_query).assert(
+    TestPair::new(Rule::jp_query, |rule| jp_query(rule, 100)).assert(
         "$.a.b[?@.a.b > 1]",
         jq!(
             segment!(selector!(a)),
@@ -149,7 +149,7 @@ fn jq_test() {
 
 #[test]
 fn comp_expr_test() {
-    TestPair::new(Rule::comp_expr, comp_expr).assert(
+    TestPair::new(Rule::comp_expr, |rule| comp_expr(rule, 100)).assert(
         "@.a.b.c == 1",
         cmp!(
             comparable!(> singular_query!(@ a b c)),
@@ -185,7 +185,7 @@ fn literal_test() {
 
 #[test]
 fn filter_atom_test() {
-    TestPair::new(Rule::atom_expr, filter_atom)
+    TestPair::new(Rule::atom_expr, |rule| filter_atom(rule, 100))
         .assert(
             "1 > 2",
             atom!(comparable!(lit!(i 1)), ">", comparable!(lit!(i 2))),
@@ -208,7 +208,7 @@ fn filter_atom_test() {
 }
 #[test]
 fn comparable_test() {
-    TestPair::new(Rule::comparable, comparable)
+    TestPair::new(Rule::comparable, |rule| comparable(rule, 100))
         .assert("1", comparable!(lit!(i 1)))
         .assert("\"a\"", comparable!(lit!(s "a")))
         .assert("@.a.b.c", comparable!(> singular_query!(@ a b c)))
@@ -219,7 +219,7 @@ fn comparable_test() {
 
 #[test]
 fn parse_path() {
-    let result = parse_json_path("$");
+    let result = parse_json_path("$", 100);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), JpQuery::new(vec![]));
 }
@@ -230,12 +230,13 @@ fn parse_i64() {
 }
 #[test]
 fn parse_selector() {
-    TestPair::new(Rule::selector, selector).assert("1:1", Selector::Slice(Some(1), Some(1), None));
+    TestPair::new(Rule::selector, |rule| selector(rule, 100))
+        .assert("1:1", Selector::Slice(Some(1), Some(1), None));
 }
 #[test]
 fn parse_global() {
     let sel_a = segment!(selector!(a));
-    TestPair::new(Rule::jp_query, jp_query)
+    TestPair::new(Rule::jp_query, |rule| jp_query(rule, 100))
         // .assert("$", JpQuery::new(vec![]))
         // .assert("$.a", JpQuery::new(vec![sel_a.clone()]))
         // .assert("$..a", JpQuery::new(vec![segment!(..sel_a)]))

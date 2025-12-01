@@ -87,7 +87,7 @@ macro_rules! slice {
 #[macro_export]
 macro_rules! test_fn {
     ($name:ident $arg:expr) => {
-        TestFunction::try_new(stringify!($name), vec![$arg]).unwrap()
+        TestFunction::try_new(stringify!($name), vec![$arg], 100).unwrap()
     };
 
     ($name:ident $arg1:expr, $arg2:expr ) => {
